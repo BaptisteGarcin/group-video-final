@@ -30,14 +30,9 @@ const Video = props => {
   return <video playsInline autoPlay ref={ref} />;
 };
 
-const videoConstraints = {
-  height: window.innerHeight / 2,
-  width: window.innerWidth / 2
-};
-
 const Room = props => {
   const [peers, setPeers] = useState([]);
-  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [speakers, setSpeakers] = useState(new Map());
   const socketRef = useRef();
   const userVideo = useRef();
   const peersRef = useRef([]);
@@ -45,59 +40,80 @@ const Room = props => {
 
   useEffect(() => {
     socketRef.current = io.connect("/");
-    navigator.mediaDevices
-      .getUserMedia({ video: videoConstraints, audio: true })
-      .then(stream => {
-        const options = {};
-        const speechEvents = hark(stream, options);
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      const options = {};
+      const speechEvents = hark(stream, options);
 
-        speechEvents.on("speaking", function() {
-          console.log("speaking");
-          setIsSpeaking(true);
-        });
+      speechEvents.on("speaking", function() {
+        console.log("speaking", socketRef.current.id);
+        setSpeakers(speakers.set(socketRef.current.id, true));
+      });
 
-        speechEvents.on("stopped_speaking", function() {
-          console.log("stopped_speaking");
-          setIsSpeaking(false);
-        });
-        userVideo.current.srcObject = stream;
-        socketRef.current.emit("join room", roomID);
-        socketRef.current.on("all users", users => {
-          const peers = [];
-          users.forEach(userID => {
-            const peer = createPeer(userID, socketRef.current.id, stream);
-            peersRef.current.push({
-              peerID: userID,
-              peer
-            });
-            peers.push(peer);
-          });
-          setPeers(peers);
-        });
+      speechEvents.on("stopped_speaking", function() {
+        console.log("stopped_speaking", socketRef.current.id);
+        // const speakers2 = speakers.map(speaker =>
+        //   speaker.id === callerID ? { ...speaker, isSpeaking: false } : speaker
+        // );
+        setSpeakers(speakers.set(socketRef.current.id, false));
+      });
 
-        socketRef.current.on("user joined", payload => {
-          const peer = addPeer(payload.signal, payload.callerID, stream);
+      userVideo.current.srcObject = stream;
+      socketRef.current.emit("join room", roomID);
+      socketRef.current.on("all users", users => {
+        const peers = [];
+        users.forEach(userID => {
+          const peer = createPeer(userID, socketRef.current.id, stream);
           peersRef.current.push({
-            peerID: payload.callerID,
+            peerID: userID,
             peer
           });
-
-          setPeers(users => [...users, peer]);
+          peers.push(peer);
         });
-
-        socketRef.current.on("receiving returned signal", payload => {
-          const item = peersRef.current.find(p => p.peerID === payload.id);
-          item.peer.signal(payload.signal);
-        });
+        setPeers(peers);
       });
+
+      socketRef.current.on("user joined", payload => {
+        const peer = addPeer(payload.signal, payload.callerID, stream);
+        peersRef.current.push({
+          peerID: payload.callerID,
+          peer
+        });
+
+        setPeers(users => [...users, peer]);
+      });
+
+      socketRef.current.on("receiving returned signal", payload => {
+        const item = peersRef.current.find(p => p.peerID === payload.id);
+        item.peer.signal(payload.signal);
+      });
+    });
   }, []);
+
+  useEffect(() => {
+    console.log("speakers", speakers);
+  }, [speakers]);
 
   function createPeer(userToSignal, callerID, stream) {
     const peer = new Peer({
-      isSpeaking: false,
       initiator: true,
       trickle: false,
       stream
+    });
+
+    const options = {};
+    const speechEvents = hark(stream, options);
+
+    speechEvents.on("speaking", function() {
+      console.log("speaking", callerID);
+      setSpeakers(speakers.set(callerID, true));
+    });
+
+    speechEvents.on("stopped_speaking", function() {
+      console.log("stopped_speaking", callerID);
+      // const speakers2 = speakers.map(speaker =>
+      //   speaker.id === callerID ? { ...speaker, isSpeaking: false } : speaker
+      // );
+      setSpeakers(speakers.set(callerID, false));
     });
 
     peer.on("signal", signal => {
@@ -113,10 +129,22 @@ const Room = props => {
 
   function addPeer(incomingSignal, callerID, stream) {
     const peer = new Peer({
-      isSpeaking: false,
       initiator: false,
       trickle: false,
       stream
+    });
+
+    const options = {};
+    const speechEvents = hark(stream, options);
+
+    speechEvents.on("speaking", function() {
+      console.log("speaking", callerID);
+      setSpeakers(speakers.set(callerID, true));
+    });
+
+    speechEvents.on("stopped_speaking", function() {
+      console.log("stopped_speaking", callerID);
+      setSpeakers(speakers.set(callerID, false));
     });
 
     peer.on("signal", signal => {
@@ -130,13 +158,27 @@ const Room = props => {
 
   return (
     <Container>
-      <video muted ref={userVideo} autoPlay playsInline style={{ border: isSpeaking && "3px solid red", height: "40%", width: "50%" }}/>
+      <video
+        muted
+        ref={userVideo}
+        autoPlay
+        playsInline
+        style={{
+          border: "3px solid red",
+          height: "40%",
+          width: "50%"
+        }}
+      />
       {peers.map((peer, index) => {
         return (
-          <Video
+          <video
             key={index}
             peer={peer}
-            style={{ border: "1px solid black", height: "40%", width: "50%" }}
+            style={{
+              border: "1px solid black",
+              height: "40%",
+              width: "50%"
+            }}
           />
         );
       })}
